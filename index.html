@@ -1,0 +1,723 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>D20 Render Simulator</title>
+<style>
+  :root{ --shake-amt: 4 }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0; background:#111213; color:#e8e7e2;
+    font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;
+    display:flex; flex-direction:column; gap:10px;
+    padding:14px 20px; height:100vh;
+  }
+  header{ flex:0 0 auto }
+  h1{font-size:16px; font-weight:650; letter-spacing:-.01em; margin:0 0 2px}
+  .sub{font-size:12px; color:#9a998f; margin:0; max-width:80ch}
+
+  main{ flex:1 1 auto; min-height:0; display:flex; gap:28px; align-items:center; justify-content:center }
+
+  /* ---------- the screen: a 3D die sunk in thick dark-blue fluid ---------- */
+  .screen-wrap{ flex:0 0 auto; display:flex; align-items:center; justify-content:center; height:100% }
+  .screen{
+    position:relative; width:380px; height:380px; border-radius:50%; overflow:hidden; cursor:pointer;
+    box-shadow:
+      inset 0 0 0 2px #000,
+      0 0 0 9px #060606,
+      0 0 0 11px rgba(255,255,255,.06),
+      0 12px 30px rgba(0,0,0,.55);
+  }
+  .screen canvas{ display:block; width:100%; height:100% }
+  .shaking{ animation-name: shake; animation-timing-function: ease-in-out; animation-fill-mode:forwards }
+  @keyframes shake{
+    0%{ transform: rotate(0deg) translateX(0) }
+    12%{ transform: rotate(calc(var(--shake-amt) * -1deg)) translateX(calc(var(--shake-amt) * -1px)) }
+    28%{ transform: rotate(calc(var(--shake-amt) * 0.8deg)) translateX(calc(var(--shake-amt) * 0.8px)) }
+    44%{ transform: rotate(calc(var(--shake-amt) * -0.7deg)) translateX(calc(var(--shake-amt) * -0.7px)) }
+    60%{ transform: rotate(calc(var(--shake-amt) * 0.5deg)) translateX(calc(var(--shake-amt) * 0.5px)) }
+    76%{ transform: rotate(calc(var(--shake-amt) * -0.25deg)) translateX(calc(var(--shake-amt) * -0.25px)) }
+    100%{ transform: rotate(0deg) translateX(0) }
+  }
+
+  /* ---------- controls ---------- */
+  .panel{
+    flex:1 1 auto; max-width:600px; height:100%; min-height:0;
+    display:grid; grid-template-columns:1fr 1fr; grid-auto-rows:min-content;
+    gap:10px; overflow-y:auto; padding-right:4px; align-content:center;
+  }
+  fieldset{ border:1px solid #2a2a28; border-radius:9px; padding:8px 10px; display:flex; flex-direction:column; gap:6px; margin:0; min-width:0 }
+  fieldset.span2{ grid-column:1 / 3 }
+  legend{ font-size:10px; letter-spacing:.08em; text-transform:uppercase; color:#9a998f; padding:0 3px }
+  label.row{ display:flex; align-items:center; gap:8px; font-size:11.5px; color:#cfcec6 }
+  label.row .name{ flex:0 0 auto; width:96px }
+  label.row input[type=range]{ flex:1 1 auto; width:auto; min-width:0 }
+  label.row .val{ flex:0 0 auto; width:56px; text-align:right; color:#8a897f; font-variant-numeric:tabular-nums }
+  input[type=range]{ accent-color:#4a90d9 }
+  .checkrow, .numrow{ display:flex; align-items:center; gap:8px; font-size:11.5px; color:#cfcec6 }
+  input[type=number]{
+    width:56px; background:#191a17; color:#e8e7e2; border:1px solid #33322e; border-radius:6px;
+    padding:4px 6px; font-size:12px;
+  }
+  textarea{
+    width:100%; height:112px; resize:vertical; background:#191a17; color:#e8e7e2;
+    border:1px solid #33322e; border-radius:8px; padding:8px; font-size:12px; line-height:1.4;
+    font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  .buttons{ grid-column:1/3; display:flex; gap:8px; flex-wrap:wrap }
+  button{
+    appearance:none; border:1px solid #3a3a36; background:#232320; color:#f0efe9;
+    padding:8px 14px; border-radius:8px; font-size:12.5px; font-weight:600; cursor:pointer;
+  }
+  button.primary{ background:#2a5fa8; border-color:#2a5fa8 }
+  button:hover{ filter:brightness(1.12) }
+  button:active{ filter:brightness(0.92) }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>D20 Render Simulator</h1>
+  <p class="sub">A white icosahedron with embossed lettering, floating in blue ink beneath the glass of a face-up screen. Buoyancy holds it against the glass: the raised letters touch it and stay white, while the recessed face has ink between it and the glass and looks blue. Anything deeper fades out. Shake it and it is driven down into the fluid, tumbles, then rises back up. A weighted core settles the answer face against the glass. Click the screen to shake.</p>
+</header>
+
+<main>
+  <div class="screen-wrap">
+    <div class="screen" id="screen"><canvas id="cv" width="380" height="380"></canvas></div>
+  </div>
+
+  <div class="panel">
+    <fieldset>
+      <legend>Shake</legend>
+      <label class="row"><span class="name">Shake time</span><input type="range" id="shakeDur" min="300" max="2500" step="50" value="900"><span class="val" id="shakeDurVal"></span></label>
+      <label class="row"><span class="name">Intensity</span><input type="range" id="intensity" min="0" max="10" step="1" value="8"><span class="val" id="intensityVal"></span></label>
+    </fieldset>
+
+    <fieldset>
+      <legend>Auto-shake</legend>
+      <label class="checkrow"><input type="checkbox" id="autoShake"> Shake automatically every</label>
+      <label class="numrow"><input type="number" id="autoShakeSecs" min="1" max="60" step="1" value="8"> seconds</label>
+    </fieldset>
+
+    <fieldset>
+      <legend>Physics</legend>
+      <label class="row"><span class="name">Buoyancy</span><input type="range" id="buoyancy" min="100" max="2000" step="50" value="1500"><span class="val" id="buoyancyVal"></span></label>
+      <label class="row"><span class="name">Viscosity</span><input type="range" id="viscosity" min="1" max="15" step="0.5" value="5"><span class="val" id="viscosityVal"></span></label>
+      <label class="row"><span class="name">Weighting</span><input type="range" id="weighting" min="5" max="150" step="5" value="10"><span class="val" id="weightingVal"></span></label>
+      <label class="row"><span class="name">Bounciness</span><input type="range" id="bounce" min="0" max="80" step="5" value="40"><span class="val" id="bounceVal"></span></label>
+      <label class="row"><span class="name">Chamber depth</span><input type="range" id="depth" min="200" max="800" step="20" value="240"><span class="val" id="depthVal"></span></label>
+    </fieldset>
+
+    <fieldset>
+      <legend>Liquid optics</legend>
+      <label class="row"><span class="name">Opacity</span><input type="range" id="opacity" min="0" max="100" step="5" value="100"><span class="val" id="opacityVal"></span></label>
+      <label class="row"><span class="name">Fade starts at</span><input type="range" id="fadeStart" min="0" max="150" step="1" value="0"><span class="val" id="fadeStartVal"></span></label>
+      <label class="row"><span class="name">Fade dist. (rest)</span><input type="range" id="fadeDist" min="1" max="150" step="1" value="5"><span class="val" id="fadeDistVal"></span></label>
+      <label class="row"><span class="name">Fade dist. (moving)</span><input type="range" id="fadeMove" min="1" max="150" step="1" value="15"><span class="val" id="fadeMoveVal"></span></label>
+      <label class="row"><span class="name">Sharpness</span><input type="range" id="sharpness" min="1" max="4" step="0.1" value="1"><span class="val" id="sharpnessVal"></span></label>
+    </fieldset>
+
+    <fieldset class="span2">
+      <legend>Ink &amp; emboss</legend>
+      <label class="row"><span class="name">Emboss height</span><input type="range" id="emboss" min="0" max="10" step="0.5" value="3"><span class="val" id="embossVal"></span></label>
+      <label class="row"><span class="name">Ink tint depth</span><input type="range" id="inkDepth" min="0.3" max="10" step="0.1" value="1.2"><span class="val" id="inkDepthVal"></span></label>
+    </fieldset>
+
+    <fieldset class="span2">
+      <legend>Answers — one per line (any number; they go on the landing face)</legend>
+      <textarea id="answers">It is certain
+It is decidedly so
+Without a doubt
+Yes definitely
+You may rely on it
+As I see it, yes
+Most likely
+Outlook good
+Yes
+Signs point to yes
+Reply hazy, try again
+Ask again later
+Better not tell you now
+Cannot predict now
+Concentrate and ask again
+Don't count on it
+My reply is no
+My sources say no
+Outlook not so good
+Very doubtful</textarea>
+    </fieldset>
+
+    <div class="buttons">
+      <button class="primary" id="askBtn">Shake the D20</button>
+      <button id="saveBtn">Save settings as default</button>
+      <button id="defaultsBtn">Restore defaults</button>
+      <button id="factoryBtn">Factory reset</button>
+    </div>
+  </div>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const TAU = Math.PI * 2;
+const clamp = (v, a, b) => Math.min(Math.max(v, a), b);
+const smooth = x => { x = clamp(x, 0, 1); return x * x * (3 - 2 * x); };
+
+// ---------- controls ----------
+const controls = {
+  shakeDur:  { el: $('shakeDur'),  out: $('shakeDurVal'),  fmt: v => `${v} ms` },
+  intensity: { el: $('intensity'), out: $('intensityVal'), fmt: v => `${v}`, live: v => $('screen').style.setProperty('--shake-amt', v * 0.7) },
+  buoyancy:  { el: $('buoyancy'),  out: $('buoyancyVal'),  fmt: v => `${v}` },
+  viscosity: { el: $('viscosity'), out: $('viscosityVal'), fmt: v => `${v}` },
+  weighting: { el: $('weighting'), out: $('weightingVal'), fmt: v => `${v}` },
+  bounce:    { el: $('bounce'),    out: $('bounceVal'),    fmt: v => `${v}%` },
+  depth:     { el: $('depth'),     out: $('depthVal'),     fmt: v => `${v} px` },
+  opacity:   { el: $('opacity'),   out: $('opacityVal'),   fmt: v => `${v}%` },
+  fadeStart: { el: $('fadeStart'), out: $('fadeStartVal'), fmt: v => `${v} px` },
+  fadeDist:  { el: $('fadeDist'),  out: $('fadeDistVal'),  fmt: v => `${v} px` },
+  fadeMove:  { el: $('fadeMove'),  out: $('fadeMoveVal'),  fmt: v => `${v} px` },
+  sharpness: { el: $('sharpness'), out: $('sharpnessVal'), fmt: v => Number(v).toFixed(1) },
+  emboss:    { el: $('emboss'),    out: $('embossVal'),    fmt: v => `${Number(v).toFixed(1)} px` },
+  inkDepth:  { el: $('inkDepth'),  out: $('inkDepthVal'),  fmt: v => `${Number(v).toFixed(1)} px` },
+};
+const FACTORY = { shakeDur: 900, intensity: 8, buoyancy: 1500, viscosity: 5, weighting: 10, bounce: 40, depth: 240, opacity: 100, fadeStart: 0, fadeDist: 5, fadeMove: 15, sharpness: 1, emboss: 3, inkDepth: 1.2 };
+const STORE_KEY = 'd20-sim-defaults';
+function loadSaved(){ try { return JSON.parse(localStorage.getItem(STORE_KEY)) || {}; } catch (e) { return {}; } }
+let DEFAULTS = { ...FACTORY, ...loadSaved() };
+const val = k => Number(controls[k].el.value);
+function applyControl(k){ const c = controls[k]; c.out.textContent = c.fmt(c.el.value); if (c.live) c.live(c.el.value); }
+function applyValues(vals){ Object.keys(controls).forEach(k => { if (k in vals) controls[k].el.value = vals[k]; applyControl(k); }); }
+Object.keys(controls).forEach(k => controls[k].el.addEventListener('input', () => applyControl(k)));
+applyValues(DEFAULTS);
+function flash(btn, text){ const old = btn.dataset.label || btn.textContent; btn.dataset.label = old; btn.textContent = text; setTimeout(() => { btn.textContent = old; }, 1400); }
+$('defaultsBtn').addEventListener('click', () => applyValues(DEFAULTS));
+$('saveBtn').addEventListener('click', () => {
+  DEFAULTS = Object.fromEntries(Object.keys(controls).map(k => [k, Number(controls[k].el.value)]));
+  try { localStorage.setItem(STORE_KEY, JSON.stringify(DEFAULTS)); flash($('saveBtn'), 'Saved ✓'); } catch (e) { flash($('saveBtn'), 'Could not save'); }
+});
+$('factoryBtn').addEventListener('click', () => {
+  try { localStorage.removeItem(STORE_KEY); } catch (e) {}
+  DEFAULTS = { ...FACTORY }; applyValues(DEFAULTS); flash($('factoryBtn'), 'Reset ✓');
+});
+
+// ---------- vector / quaternion helpers ([w,x,y,z]) ----------
+const sub = (a, b) => [a[0]-b[0], a[1]-b[1], a[2]-b[2]];
+const dot = (a, b) => a[0]*b[0] + a[1]*b[1] + a[2]*b[2];
+const cross = (a, b) => [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]];
+const vlen = a => Math.hypot(a[0], a[1], a[2]);
+const vnorm = a => { const l = vlen(a) || 1; return [a[0]/l, a[1]/l, a[2]/l]; };
+const qnorm = q => { const l = Math.hypot(q[0], q[1], q[2], q[3]) || 1; return [q[0]/l, q[1]/l, q[2]/l, q[3]/l]; };
+const qmul = (a, b) => [
+  a[0]*b[0]-a[1]*b[1]-a[2]*b[2]-a[3]*b[3],
+  a[0]*b[1]+a[1]*b[0]+a[2]*b[3]-a[3]*b[2],
+  a[0]*b[2]-a[1]*b[3]+a[2]*b[0]+a[3]*b[1],
+  a[0]*b[3]+a[1]*b[2]-a[2]*b[1]+a[3]*b[0]];
+function qslerp(a, b, t){
+  let d = a[0]*b[0] + a[1]*b[1] + a[2]*b[2] + a[3]*b[3];
+  if (d < 0){ b = b.map(x => -x); d = -d; }
+  if (d > 0.9995) return qnorm(a.map((x, i) => x + (b[i] - x) * t));
+  const th = Math.acos(d), s = Math.sin(th), wa = Math.sin((1 - t) * th) / s, wb = Math.sin(t * th) / s;
+  return a.map((x, i) => x * wa + b[i] * wb);
+}
+function matFromQuat([w, x, y, z]){
+  return [1-2*(y*y+z*z), 2*(x*y-z*w), 2*(x*z+y*w),
+          2*(x*y+z*w), 1-2*(x*x+z*z), 2*(y*z-x*w),
+          2*(x*z-y*w), 2*(y*z+x*w), 1-2*(x*x+y*y)];
+}
+function quatFromMat(m){
+  const t = m[0] + m[4] + m[8]; let w, x, y, z, s;
+  if (t > 0){ s = Math.sqrt(t + 1) * 2; w = s/4; x = (m[7]-m[5])/s; y = (m[2]-m[6])/s; z = (m[3]-m[1])/s; }
+  else if (m[0] > m[4] && m[0] > m[8]){ s = Math.sqrt(1 + m[0] - m[4] - m[8]) * 2; w = (m[7]-m[5])/s; x = s/4; y = (m[1]+m[3])/s; z = (m[2]+m[6])/s; }
+  else if (m[4] > m[8]){ s = Math.sqrt(1 + m[4] - m[0] - m[8]) * 2; w = (m[2]-m[6])/s; x = (m[1]+m[3])/s; y = s/4; z = (m[5]+m[7])/s; }
+  else { s = Math.sqrt(1 + m[8] - m[0] - m[4]) * 2; w = (m[3]-m[1])/s; x = (m[2]+m[6])/s; y = (m[5]+m[7])/s; z = s/4; }
+  return qnorm([w, x, y, z]);
+}
+const mulv = (m, v) => [m[0]*v[0]+m[1]*v[1]+m[2]*v[2], m[3]*v[0]+m[4]*v[1]+m[5]*v[2], m[6]*v[0]+m[7]*v[1]+m[8]*v[2]];
+const randDir = () => { let v; do v = [Math.random()*2-1, Math.random()*2-1, Math.random()*2-1]; while (vlen(v) > 1 || vlen(v) < .1); return vnorm(v); };
+
+// ---------- icosahedron ----------
+const EDGE = 150;
+const PHI = (1 + Math.sqrt(5)) / 2;
+const VERTS = [[0,1,PHI],[0,-1,PHI],[0,1,-PHI],[0,-1,-PHI],[1,PHI,0],[-1,PHI,0],[1,-PHI,0],[-1,-PHI,0],[PHI,0,1],[-PHI,0,1],[PHI,0,-1],[-PHI,0,-1]]
+  .map(v => v.map(c => c * EDGE / 2));
+const R_IN = EDGE * 0.7558;      // centre-to-face distance: the die's resting depth against the glass
+const R_CIRC = EDGE * 0.9511;    // centre-to-vertex distance
+const FACES = [];
+{
+  const near = (a, b) => Math.abs(vlen(sub(VERTS[a], VERTS[b])) - EDGE) < 1;
+  for (let i = 0; i < 12; i++) for (let j = i+1; j < 12; j++) for (let k = j+1; k < 12; k++){
+    if (!(near(i,j) && near(j,k) && near(i,k))) continue;
+    const c = [0,1,2].map(a => (VERTS[i][a] + VERTS[j][a] + VERTS[k][a]) / 3);
+    const n = vnorm(c);
+    let idx = [i, j, k];
+    // texture apex (bottom) / top-right / top-left must run counter-clockwise seen from outside
+    if (dot(cross(sub(VERTS[j], VERTS[i]), sub(VERTS[k], VERTS[i])), n) < 0) idx = [i, k, j];
+    const u = vnorm(sub(c, VERTS[idx[0]]));                 // apex points down, so "up" for the text is apex -> centre
+    const r = cross(u, n);
+    const target = quatFromMat([r[0],r[1],r[2], u[0],u[1],u[2], n[0],n[1],n[2]]); // orientation with this face flat to the glass, text upright
+    FACES.push({ idx, c, n, u, target });
+  }
+}
+
+// ---------- face textures ----------
+const TEX = 256, TT = [[128, 214], [240, 20], [16, 20]];   // texture-space triangle, point down like the 8-ball's (apex, top-right, top-left)
+const triW = y => 224 * (214 - y) / 194;                    // widest at the top
+
+function wrap(ctx, text, maxW){
+  const words = text.split(/\s+/), lines = []; let cur = '';
+  for (const w of words){
+    if (ctx.measureText(w).width > maxW) return null;
+    const t = cur ? cur + ' ' + w : w;
+    if (ctx.measureText(t).width <= maxW) cur = t; else { lines.push(cur); cur = w; }
+  }
+  lines.push(cur); return lines;
+}
+// Text layout: the biggest font whose wrapped lines all sit inside the pointing-down triangle. Leaves the font set on ctx.
+function fitText(ctx, text, isAnswer){
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  for (let size = 36; size >= 9; size--){
+    ctx.font = `${isAnswer ? 700 : 500} ${isAnswer ? '' : 'italic '}${size}px ui-sans-serif, system-ui, sans-serif`;
+    for (const maxW of [200, 170, 140, 115, 95, 78, 64]){
+      const lines = wrap(ctx, text, maxW); if (!lines) continue;
+      const lh = size * 1.12, top = 80 - lines.length * lh / 2;
+      if (top < 26 || top + lines.length * lh > 172) continue;
+      if (lines.every((l, i) => ctx.measureText(l).width <= triW(top + (i + 1) * lh) - 16)) return { lines, lh, top };
+    }
+  }
+  ctx.font = '700 9px sans-serif'; return { lines: [text], lh: 10, top: 75 };
+}
+
+// ---------- embossed lettering, modelled as real geometry ----------
+// Each face gets its lettering as polygon outlines (traced from a hi-res mask of the text). They are extruded off the face
+// plane by the emboss height: a flat cap at the top, and side walls down to the face. Nothing is faked with shadows;
+// the caps and walls are lit, tinted by the ink over them and faded by depth like any other part of the die.
+FACES.forEach(f => {
+  const [a, b, c] = f.idx.map(i => VERTS[i]);
+  const e1 = sub(b, a), e2 = sub(c, a);
+  const u1 = [TT[1][0]-TT[0][0], TT[1][1]-TT[0][1]], u2 = [TT[2][0]-TT[0][0], TT[2][1]-TT[0][1]];
+  const det = u1[0]*u2[1] - u2[0]*u1[1];
+  f.toLocal = ([tx, ty]) => {       // texture-space point -> 3D point on the face plane
+    const dx = tx - TT[0][0], dy = ty - TT[0][1], s = (u2[1]*dx - u2[0]*dy) / det, t = (-u1[1]*dx + u1[0]*dy) / det;
+    return [a[0] + s*e1[0] + t*e2[0], a[1] + s*e1[1] + t*e2[1], a[2] + s*e1[2] + t*e2[2]];
+  };
+  f.Ex = vnorm(sub(f.toLocal([TT[0][0] + 1, TT[0][1]]), a));   // texture axes as 3D directions in the face plane
+  f.Ey = vnorm(sub(f.toLocal([TT[0][0], TT[0][1] + 1]), a));
+});
+
+const MASK = 512, MS = MASK / TEX;   // trace at 2x for smoother outlines
+const maskCv = document.createElement('canvas'); maskCv.width = maskCv.height = MASK;
+const maskCtx = maskCv.getContext('2d', { willReadFrequently: true });
+
+// Boundary of the solid pixels, as closed loops of grid vertices (solid always on one side of every edge).
+function traceLoops(mask){
+  const N = MASK, V = N + 1, out = new Map();
+  const solid = (x, y) => x >= 0 && y >= 0 && x < N && y < N && mask[y * N + x] === 1;
+  const add = (x0, y0, x1, y1) => { const k = y0 * V + x0; let l = out.get(k); if (!l){ l = []; out.set(k, l); } l.push(y1 * V + x1); };
+  for (let y = 40; y < 360; y++) for (let x = 0; x < N; x++){
+    if (!mask[y * N + x]) continue;
+    if (!solid(x, y - 1)) add(x, y, x + 1, y);
+    if (!solid(x + 1, y)) add(x + 1, y, x + 1, y + 1);
+    if (!solid(x, y + 1)) add(x + 1, y + 1, x, y + 1);
+    if (!solid(x - 1, y)) add(x, y + 1, x, y);
+  }
+  const loops = [];
+  for (const [k0, list] of out){
+    while (list.length){
+      const pts = []; let cur = k0;
+      do {
+        pts.push([cur % V, (cur / V) | 0]);
+        const l = out.get(cur); if (!l || !l.length) break;
+        cur = l.pop();
+      } while (cur !== k0);
+      if (pts.length >= 4) loops.push(pts);
+    }
+  }
+  return loops;
+}
+function dpSimplify(pts, eps){   // Douglas-Peucker on an open polyline
+  const n = pts.length; if (n < 3) return pts;
+  const [ax, ay] = pts[0], [bx, by] = pts[n - 1], dx = bx - ax, dy = by - ay, len = Math.hypot(dx, dy) || 1;
+  let idx = 0, dmax = 0;
+  for (let i = 1; i < n - 1; i++){ const d = Math.abs((pts[i][0] - ax) * dy - (pts[i][1] - ay) * dx) / len; if (d > dmax){ dmax = d; idx = i; } }
+  if (dmax <= eps) return [pts[0], pts[n - 1]];
+  return dpSimplify(pts.slice(0, idx + 1), eps).slice(0, -1).concat(dpSimplify(pts.slice(idx), eps));
+}
+function simplifyLoop(pts, eps){
+  let m = 0, md = 0;
+  pts.forEach((p, i) => { const d = Math.hypot(p[0] - pts[0][0], p[1] - pts[0][1]); if (d > md){ md = d; m = i; } });
+  return dpSimplify(pts.slice(0, m + 1), eps).slice(0, -1).concat(dpSimplify(pts.slice(m).concat([pts[0]]), eps).slice(0, -1));
+}
+
+function convexHull(points){   // Andrew's monotone chain
+  const pts = points.slice().sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  if (pts.length < 3) return pts;
+  const cr = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+  const half = list => { const h = []; for (const p of list){ while (h.length >= 2 && cr(h[h.length - 2], h[h.length - 1], p) <= 0) h.pop(); h.push(p); } h.pop(); return h; };
+  return half(pts).concat(half(pts.slice().reverse()));
+}
+
+const letterCache = new Map();
+function buildLetters(text, isAnswer){
+  const key = (isAnswer ? 'A|' : 'J|') + text;
+  if (letterCache.has(key)) return letterCache.get(key);
+  const c = maskCtx;
+  c.setTransform(1, 0, 0, 1, 0, 0); c.clearRect(0, 0, MASK, MASK); c.setTransform(MS, 0, 0, MS, 0, 0);
+  const best = fitText(c, text, isAnswer);
+  c.fillStyle = '#fff';
+  best.lines.forEach((l, i) => c.fillText(l, 128, best.top + i * best.lh + best.lh / 2));
+  const data = c.getImageData(0, 0, MASK, MASK).data, mask = new Uint8Array(MASK * MASK);
+  for (let i = 0; i < mask.length; i++) mask[i] = data[i * 4 + 3] > 127 ? 1 : 0;
+  let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+  const polys = traceLoops(mask).map(l => simplifyLoop(l, 0.8)).filter(l => l.length >= 3).map(l => {
+    const pts = l.map(([x, y]) => [x / MS, y / MS]);
+    pts.forEach(([x, y]) => { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); });
+    // outward normal of every edge (the solid lies on the (-dy, dx) side of each traced edge)
+    const nrm = pts.map((p, k) => { const q = pts[(k + 1) % pts.length], dx = q[0] - p[0], dy = q[1] - p[1], len = Math.hypot(dx, dy) || 1; return [dy / len, -dx / len]; });
+    return { pts, nrm };
+  });
+  const res = { polys, samples: convexHull(polys.flatMap(p => p.pts)) };   // hull corners are the only lettering points that can touch the glass first
+  letterCache.set(key, res);
+  return res;
+}
+
+const JOKES = [
+  '404: answer not found', 'Ask your mom', 'Skill issue', 'The fluid knows', 'Have you tried turning it off?',
+  'Loading… 99%', 'Consult a duck', 'Not it', 'Bold of you to ask', 'Error: too much thinking',
+  'Yes, but no', 'No, but yes', 'Snack first', '42', 'This face left blank on purpose',
+  'Ask a mirror', 'Nat 1', 'Roll for initiative', 'Sounds like a you problem', 'Reply cloudy, drink water',
+  'I was looking at the other side', 'Peek-a-boo', 'Not the face you wanted', 'Please hold', 'Definitely maybe',
+  'Ask again in 5 min', 'Have you tried a nap?', 'Answer is in another castle', 'Hmm', 'Trust the vibes',
+];
+let letters = [];   // per face: { polys, samples, local }
+function setFaces(answerFace, answerText){
+  const jokes = JOKES.slice().sort(() => Math.random() - .5);
+  letters = FACES.map((f, i) => {
+    const L = buildLetters(i === answerFace ? answerText : jokes.pop(), i === answerFace);
+    return { ...L, local: L.samples.map(f.toLocal) };   // extremes of the lettering, for the glass-contact test
+  });
+}
+
+// ---------- simulation state ----------
+const W = 380, CX = W / 2, CY = W / 2, RS = W / 2, F = 800;   // canvas size, centre, screen radius, camera distance
+const cv = $('cv'), mainCtx = cv.getContext('2d');
+let ctx = mainCtx;
+const offCv = document.createElement('canvas'), offCtx = offCv.getContext('2d');   // the die is drawn here so fog can erase it instead of painting over the fluid
+const dpr = Math.min(window.devicePixelRatio || 1, 2);
+cv.width = cv.height = offCv.width = offCv.height = W * dpr;
+
+const die = {
+  mode: 'rest', t: 0,
+  q: FACES[0].target.slice(), w: [0,0,0],   // orientation, angular velocity (world frame, rad/s)
+  x: 0, y: 0, vx: 0, vy: 0,
+  D: R_IN + val('emboss'), vD: 0,                       // centre depth behind the glass (px) and its velocity (+ = away from the viewer)
+  contact: R_IN + val('emboss'),        // smallest centre depth at which nothing (vertices, raised letters) pierces the glass
+  face: 0, target: 0, swapped: true, kick: 0, calm: 0, ph: [0, 0], mot: 0,   // mot: 0 = settled .. 1 = in motion
+};
+let M = matFromQuat(die.q);
+setFaces(0, 'Shake me');
+
+let busy = false, lastAnswer = '';
+const shakeEl = $('screen');
+
+function pickAnswer(){
+  const lines = $('answers').value.split('\n').map(s => s.trim()).filter(Boolean);
+  if (!lines.length) return null;
+  let a; do a = lines[Math.floor(Math.random() * lines.length)]; while (lines.length > 1 && a === lastAnswer);
+  return (lastAnswer = a);
+}
+
+function playAsk(){
+  if (busy) return;
+  const answer = pickAnswer(); if (!answer) return;
+  busy = true;
+  do die.target = Math.floor(Math.random() * FACES.length); while (die.target === die.face);
+  die.answer = answer;
+  die.mode = 'tumble'; die.t = 0; die.swapped = false; die.kick = 0; die.calm = 0;
+  die.ph = [Math.random() * TAU, Math.random() * TAU];
+  die.w = randDir().map(c => c * (4 + val('intensity') * 0.8));
+  shakeEl.style.animationDuration = val('shakeDur') + 'ms';
+  shakeEl.classList.add('shaking');
+  shakeEl.addEventListener('animationend', () => shakeEl.classList.remove('shaking'), { once: true });
+}
+
+// The screen lies face-up and we look down on it: "up" is toward the glass/viewer, depth grows away from us.
+// Buoyancy pushes the die up against the glass, viscosity resists every motion, and the die's weighted core
+// (heavy side opposite the answer face) turns the answer face upward like a righting pendulum.
+// Smallest centre depth at which nothing pierces the glass: the nearest vertex, or the top of the raised lettering.
+function contactDepth(){
+  let m = -Infinity;
+  for (const v of VERTS) m = Math.max(m, M[6]*v[0] + M[7]*v[1] + M[8]*v[2]);
+  const h = val('emboss');
+  FACES.forEach((f, i) => {
+    const lift = h * (M[6]*f.n[0] + M[7]*f.n[1] + M[8]*f.n[2]);
+    for (const p of letters[i].local) m = Math.max(m, M[6]*p[0] + M[7]*p[1] + M[8]*p[2] + lift);
+  });
+  return m;
+}
+
+function physics(h){
+  const S = val('shakeDur') / 1000, it = val('intensity');
+  const B = val('buoyancy'), mu = val('viscosity'), kUp = val('weighting'), e = val('bounce') / 100, Dmax = val('depth');
+  const muR = mu * 1.25;                       // rotational drag
+  die.t += h; const t = die.t;
+
+  // shaking the case: an upward jerk of the screen drives the die down into the fluid
+  let az = 0;
+  if (t < S){
+    const env = t < S * 0.85 ? 1 : 1 - (t - S * 0.85) / (S * 0.15);
+    az = B * (0.6 + 0.35 * it) * (1 + 0.6 * Math.sin(TAU * 4 * t + die.ph[0])) * env;
+    die.kick += h;
+    if (die.kick > 0.08){                      // sloshing: random shoves and twists
+      die.kick = 0;
+      const k = randDir(), j = randDir();
+      die.w = die.w.map((c, i) => c + k[i] * (3 + it * 0.9) * env);
+      die.vx += j[0] * (25 + it * 12) * env; die.vy += j[1] * (25 + it * 12) * env;
+    }
+  }
+
+  // rotation: weighted-core torque + gentle yaw alignment (keeps the text upright) - viscous drag
+  const face = FACES[die.target], nw = mulv(M, face.n), uw = mulv(M, face.u);
+  const kEff = kUp * (1 + Math.max(0, t - S - 2) * 1.5);     // guarantees a settle if it is slow to find its way
+  const yaw = Math.atan2(-uw[0], uw[1]), yawGain = Math.max(0, nw[2]) ** 2;
+  const al = [kEff * nw[1], -kEff * nw[0], -0.4 * kEff * yaw * yawGain];
+  die.w = die.w.map((c, i) => c + (al[i] - muR * c) * h);
+  const dq = qmul([0, ...die.w], die.q);
+  die.q = qnorm(die.q.map((c, i) => c + 0.5 * dq[i] * h));
+  M = matFromQuat(die.q);
+  die.contact = contactDepth();
+
+  // depth: net buoyancy up, drive down while shaken, drag; bounces off the glass and the back wall
+  die.vD += (az - B - mu * die.vD) * h;
+  die.D += die.vD * h;
+  if (die.D < die.contact){ die.D = die.contact; if (die.vD < 0) die.vD = -die.vD * e < 20 ? 0 : -die.vD * e; }
+  if (die.D > Dmax){ die.D = Dmax; if (die.vD > 0) die.vD *= -e; }
+
+  // sideways: drag, plus a gentle dish-shaped pull toward the middle; bounces off the rim
+  const kc = 20;
+  die.vx += (-kc * die.x - mu * die.vx) * h; die.vy += (-kc * die.y - mu * die.vy) * h;
+  die.x += die.vx * h; die.y += die.vy * h;
+  const sc = F / (F + die.D), lim = Math.max(0, (RS - 6) / sc - R_CIRC), r = Math.hypot(die.x, die.y);
+  if (r > lim && r > 0){
+    const nx = die.x / r, ny = die.y / r, vn = die.vx * nx + die.vy * ny;
+    die.x = nx * lim; die.y = ny * lim;
+    if (vn > 0){ die.vx -= (1 + e) * vn * nx; die.vy -= (1 + e) * vn * ny; }
+  }
+}
+
+function step(dt){
+  if (die.mode !== 'tumble') return;
+  const n = Math.max(1, Math.ceil(dt / 0.004));
+  for (let i = 0; i < n; i++) physics(dt / n);
+  const S = val('shakeDur') / 1000, t = die.t;
+
+  // swap the faces once the whole die is hidden by the fluid
+  const hide = fogBlack(die.D - die.contact);   // 1 = nothing of the die can be seen
+  if (!die.swapped && (hide > 0.999 || (t > S && hide > 0.95) || t > S + 1.5)){ setFaces(die.target, die.answer); die.swapped = true; }
+
+  // settled: still, flat on the glass, answer face up and upright
+  const nw = mulv(M, FACES[die.target].n), uw = mulv(M, FACES[die.target].u);
+  const still = vlen(die.w) < 0.15 && Math.acos(clamp(nw[2], -1, 1)) < 0.02 && Math.abs(Math.atan2(-uw[0], uw[1])) < 0.03
+    && die.D - die.contact < 0.6 && Math.abs(die.vD) < 8 && Math.hypot(die.x, die.y) < 0.6 && Math.hypot(die.vx, die.vy) < 6;
+  die.calm = t > S + 0.3 && still ? die.calm + dt : 0;
+  if (die.calm > 0.15 || t > S + 12){
+    die.mode = 'rest'; die.face = die.target; die.q = FACES[die.target].target.slice();
+    die.w = [0,0,0]; die.x = die.y = die.vx = die.vy = die.vD = 0; die.D = R_IN + val('emboss'); M = matFromQuat(die.q);
+    if (!die.swapped){ setFaces(die.target, die.answer); die.swapped = true; }
+    busy = false;
+  }
+}
+
+// ---------- rendering ----------
+// Fade distance eases between its resting and moving values: up quickly when the die is in motion, back down slowly as it settles.
+function updateMotion(dt){
+  const target = die.mode === 'tumble' ? clamp(Math.max(vlen(die.w) / 3, Math.abs(die.vD) / 120, Math.hypot(die.vx, die.vy) / 50), 0, 1) : 0;
+  die.mot += (target - die.mot) * (1 - Math.exp(-(target > die.mot ? 12 : 2.5) * dt));
+}
+const fadeNow = () => val('fadeDist') + (val('fadeMove') - val('fadeDist')) * die.mot;
+
+// Fluid extinction: 0 = fully visible, ceiling = the liquid's opacity. Fades in after `fadeStart` px of depth over about `fadeDist` px.
+function fogBlack(d){
+  const x = Math.max(0, d - val('fadeStart')) / fadeNow();
+  return (val('opacity') / 100) * (1 - Math.exp(-Math.pow(x, val('sharpness'))));
+}
+
+const INK = [10, 40, 205];
+const inkAt = d => `rgba(${INK},${1 - Math.exp(-d / val('inkDepth'))})`;
+// White plastic seen through `d` px of ink, lit by `shade` (same result as the ink and shading overlays used on the face).
+function inkedColor(d, shade){
+  const a = 1 - Math.exp(-d / val('inkDepth')), dark = [0, 4, 30];
+  return `rgb(${[0, 1, 2].map(k => Math.round((255 + (INK[k] - 255) * a) * shade + dark[k] * (1 - shade))).join(',')})`;
+}
+
+// Fill the current path with a colour that varies along the face's depth gradient.
+function fillDepth(sp, dp, colorAt, rule){
+  const [x0, y0] = sp[0], d0 = dp[0];
+  const det = (sp[1][0]-x0) * (sp[2][1]-y0) - (sp[1][1]-y0) * (sp[2][0]-x0);
+  const dmin = Math.min(...dp), dmax = Math.max(...dp);
+  let gx = 0, gy = 0;
+  if (Math.abs(det) > 1e-3){
+    gx = ((dp[1]-d0) * (sp[2][1]-y0) - (dp[2]-d0) * (sp[1][1]-y0)) / det;
+    gy = ((sp[1][0]-x0) * (dp[2]-d0) - (sp[2][0]-x0) * (dp[1]-d0)) / det;
+  }
+  const gm = gx*gx + gy*gy;
+  if (gm < 1e-9 || dmax - dmin < 0.5){ ctx.fillStyle = colorAt((dmin + dmax) / 2); ctx.fill(rule); return; }
+  const l0 = (dmin - d0) / gm, l1 = (dmax - d0) / gm;
+  const g = ctx.createLinearGradient(x0 + gx*l0, y0 + gy*l0, x0 + gx*l1, y0 + gy*l1);
+  for (let i = 0; i <= 24; i++){ const u = Math.pow(i / 24, 2); g.addColorStop(u, colorAt(dmin + (dmax - dmin) * u)); }   // denser near the shallow end, where the fog cuts in
+  ctx.fillStyle = g; ctx.fill(rule);
+}
+// Depth of an arbitrary point on the face plane, from the projected corners and their depths.
+function depthAtFn(sp, dp){
+  const [x0, y0] = sp[0], d0 = dp[0];
+  const det = (sp[1][0]-x0) * (sp[2][1]-y0) - (sp[1][1]-y0) * (sp[2][0]-x0);
+  if (Math.abs(det) < 1e-3) return () => (dp[0] + dp[1] + dp[2]) / 3;
+  const gx = ((dp[1]-d0) * (sp[2][1]-y0) - (dp[2]-d0) * (sp[1][1]-y0)) / det;
+  const gy = ((sp[1][0]-x0) * (dp[2]-d0) - (sp[2][0]-x0) * (dp[1]-d0)) / det;
+  return (x, y) => d0 + gx * (x - x0) + gy * (y - y0);
+}
+
+const LIGHT = vnorm([-0.35, 0.55, 0.75]), LIGHT_REST = LIGHT[2];
+
+const tri = sp => { ctx.beginPath(); ctx.moveTo(...sp[0]); ctx.lineTo(...sp[1]); ctx.lineTo(...sp[2]); ctx.closePath(); };
+
+// The raised lettering of one face: side walls that face the viewer, then the flat caps on top.
+function drawLetters(i, f, nw, sp, dp, aff, shift, vv, h, shade){
+  const L = letters[i], nz = Math.max(0, nw[2]);
+  if (Math.hypot(shift[0], shift[1]) > 0.15){       // seen exactly head-on the walls are edge-on and have no width
+    const Exw = mulv(M, f.Ex), Eyw = mulv(M, f.Ey), depthAt = depthAtFn(sp, dp);
+    ctx.lineWidth = 0.5;
+    for (const { pts, nrm } of L.polys){
+      const n = pts.length;
+      for (let k = 0; k < n; k++){
+        const wn = [0, 1, 2].map(a => nrm[k][0] * Exw[a] + nrm[k][1] * Eyw[a]);   // outward wall normal in the world
+        if (dot(wn, vv) <= 0) continue;
+        const p = aff(pts[k]), q = aff(pts[(k + 1) % n]);
+        const d = depthAt((p[0] + q[0]) / 2, (p[1] + q[1]) / 2) - h * nz * 0.5;
+        ctx.fillStyle = ctx.strokeStyle = inkedColor(d, 0.3 + 0.7 * Math.max(0, dot(wn, LIGHT)));
+        ctx.beginPath(); ctx.moveTo(p[0], p[1]); ctx.lineTo(q[0], q[1]); ctx.lineTo(q[0] + shift[0], q[1] + shift[1]); ctx.lineTo(p[0] + shift[0], p[1] + shift[1]); ctx.closePath();
+        ctx.fill(); ctx.stroke();   // the stroke hides hairline seams between neighbouring walls
+      }
+    }
+  }
+  ctx.beginPath();
+  for (const { pts } of L.polys){
+    pts.forEach((pt, k) => { const p = aff(pt); if (k) ctx.lineTo(p[0] + shift[0], p[1] + shift[1]); else ctx.moveTo(p[0] + shift[0], p[1] + shift[1]); });
+    ctx.closePath();
+  }
+  fillDepth(sp, dp.map(d => d - h * nz), d => inkedColor(d, shade), 'evenodd');   // caps sit h closer to the glass than the face
+}
+
+function drawDie(){
+  ctx = offCtx; ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, W, W);
+  const P = VERTS.map(v => {
+    const r = mulv(M, v), depth = die.D - r[2], k = F / (F + depth);
+    return { sx: CX + (die.x + r[0]) * k, sy: CY - (die.y + r[1]) * k, depth };
+  });
+  const order = [];
+  FACES.forEach((f, i) => {
+    const nw = mulv(M, f.n), cr = mulv(M, f.c);
+    const cwx = die.x + cr[0], cwy = die.y + cr[1], cwz = cr[2] - die.D;
+    if (dot(nw, [-cwx, -cwy, F - cwz]) <= 0) return;   // back face
+    order.push({ i, nw, depth: die.D - cr[2] });
+  });
+  order.sort((a, b) => b.depth - a.depth);
+
+  const h = val('emboss');
+  for (const { i, nw } of order){
+    const f = FACES[i], vs = f.idx.map(j => P[j]);
+    const sp = vs.map(p => [p.sx, p.sy]), dp = vs.map(p => Math.max(0, p.depth));
+    const shade = 0.62 + 0.38 * clamp(dot(nw, LIGHT) / LIGHT_REST, 0, 1.1);
+    ctx.save();
+    tri(sp); ctx.clip();
+    // the face: white plastic under ink that thickens with depth, then lambert-ish shading
+    tri(sp); ctx.fillStyle = '#ffffff'; ctx.fill();
+    fillDepth(sp, dp, inkAt);
+    ctx.fillStyle = `rgba(0,4,30,${clamp(1 - shade, 0, 1)})`; ctx.fill();
+    // the raised letters, unless the fluid already hides this whole face
+    if (fogBlack(Math.min(...dp) - h) < 0.995){
+      const cr = mulv(M, f.c), cx3 = die.x + cr[0], cy3 = die.y + cr[1], dC = die.D - cr[2];
+      const k1 = F / (F + dC), k2 = F / (F + dC - nw[2] * h);
+      const shift = [(cx3 + nw[0] * h) * k2 - cx3 * k1, -((cy3 + nw[1] * h) * k2 - cy3 * k1)];   // where a point lifted by h along the normal lands relative to its base
+      // texture space -> screen, from the three projected corners
+      const u1 = [TT[1][0]-TT[0][0], TT[1][1]-TT[0][1]], u2 = [TT[2][0]-TT[0][0], TT[2][1]-TT[0][1]];
+      const s1 = [sp[1][0]-sp[0][0], sp[1][1]-sp[0][1]], s2 = [sp[2][0]-sp[0][0], sp[2][1]-sp[0][1]];
+      const det = u1[0]*u2[1] - u1[1]*u2[0];
+      const a = (s1[0]*u2[1] - s2[0]*u1[1]) / det, c = (s2[0]*u1[0] - s1[0]*u2[0]) / det;
+      const b = (s1[1]*u2[1] - s2[1]*u1[1]) / det, d = (s2[1]*u1[0] - s1[1]*u2[0]) / det;
+      const e = sp[0][0] - a*TT[0][0] - c*TT[0][1], g = sp[0][1] - b*TT[0][0] - d*TT[0][1];
+      drawLetters(i, f, nw, sp, dp, q => [a*q[0] + c*q[1] + e, b*q[0] + d*q[1] + g], shift, [-cx3, -cy3, F + die.D - cr[2]], h, shade);
+    }
+    // the fluid: erase by depth (measured from the face, so the raised letters are never hidden before it is)
+    tri(sp); ctx.globalCompositeOperation = 'destination-out';
+    fillDepth(sp, dp, dd => `rgba(0,0,0,${fogBlack(dd - h)})`);
+    ctx.restore();
+    // edge line, fading with depth too
+    const dm = (dp[0] + dp[1] + dp[2]) / 3;
+    // the clip antialiases its border, which would leave a faint outline of erased faces; erase that too
+    tri(sp); ctx.globalCompositeOperation = 'destination-out'; ctx.strokeStyle = `rgba(0,0,0,${fogBlack(dm - h)})`; ctx.lineWidth = 2; ctx.stroke();
+    ctx.globalCompositeOperation = 'source-over';
+    tri(sp); ctx.strokeStyle = `rgba(60,90,220,${0.55 * (1 - fogBlack(dm - h))})`; ctx.lineWidth = 1.2; ctx.stroke();
+  }
+  ctx = mainCtx;
+  ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.drawImage(offCv, 0, 0); ctx.restore();
+}
+
+function drawGlass(){
+  const g = ctx.createRadialGradient(CX, CY, RS * 0.62, CX, CY, RS);
+  g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, 'rgba(0,0,0,0.55)');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, W);
+  ctx.save();
+  ctx.translate(CX - 70, CY - 120); ctx.rotate(-0.55);
+  const h = ctx.createLinearGradient(0, -40, 0, 40);
+  h.addColorStop(0, 'rgba(255,255,255,0.13)'); h.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = h; ctx.beginPath(); ctx.ellipse(0, 0, 105, 38, 0, 0, TAU); ctx.fill();
+  ctx.restore();
+}
+
+let last = performance.now();
+function frame(now){
+  const dt = Math.min(0.033, (now - last) / 1000); last = now;
+  step(dt);
+  if (die.mode === 'rest') die.D = die.contact = R_IN + val('emboss');   // letters touch the glass
+  updateMotion(dt);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, W, W);
+  ctx.save(); ctx.beginPath(); ctx.arc(CX, CY, RS, 0, TAU); ctx.clip();
+  ctx.fillStyle = '#02040e'; ctx.fillRect(0, 0, W, W);
+  drawDie();
+  drawGlass();
+  ctx.restore();
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+$('askBtn').addEventListener('click', playAsk);
+$('screen').addEventListener('click', playAsk);
+
+{
+  const qs = new URLSearchParams(location.search);
+  const forced = qs.get('text');
+  if (forced) $('answers').value = forced;
+  if (qs.get('autoask') === '1') playAsk();
+  // ?ff=<seconds> fast-forwards the shake, for screenshots at a given moment
+  for (let n = Math.round(Number(qs.get('ff')) * 60); n > 0; n--){ step(1 / 60); updateMotion(1 / 60); }
+  if (qs.get('ff')) shakeEl.classList.remove('shaking');
+}
+
+// ---------- auto-shake ----------
+let autoTimer = null;
+function updateAutoShake(){
+  if (autoTimer){ clearInterval(autoTimer); autoTimer = null; }
+  if ($('autoShake').checked){
+    const secs = clamp(Number($('autoShakeSecs').value) || 8, 1, 60);
+    autoTimer = setInterval(() => { if (!busy) playAsk(); }, secs * 1000);
+  }
+}
+$('autoShake').addEventListener('change', updateAutoShake);
+$('autoShakeSecs').addEventListener('input', () => { if ($('autoShake').checked) updateAutoShake(); });
+
+window.__die = { die, playAsk };
+</script>
+</body>
+</html>
